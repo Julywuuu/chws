@@ -322,7 +322,7 @@ void test_move(){
 }
 
 void testgit(){
-    std::cout<<"测试git" <<std::endl;
+    std::cout<<"第二次测试git在分支上修改" <<std::endl;
 }
 
 int main(int argc, char *argv[]) {
