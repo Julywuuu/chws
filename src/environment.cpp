@@ -321,6 +321,10 @@ void test_move(){
     }
 }
 
+void testgit(){
+    std::cout<<"测试git" <<std::endl;
+}
+
 int main(int argc, char *argv[]) {
     signal(SIGINT, sig_handle);
 	//创建子线程
