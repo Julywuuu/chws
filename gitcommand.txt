@@ -1,0 +1,21 @@
+git config --global http.proxy "socks5://192.168.***.***:6500"   #192.168.106.119是本机所连wifi的IP-DNS地址,6500是V2Ray设置的端口
+git config --global https.proxy "socks5://192.168.***.***:6500"
+
+git config --global --unset http.proxy
+git config --global --unset https.proxy
+
+git push -u origin master:main  //master本地,main远程
+
+git checkout master 切换分支
+
+git checkout -b <branchname>  以当前分支为基础新建分支
+
+git merge b  把b分支合并到当前分支
+
+git branch 列举所有分支
+
+git branch -D <branchname>  删除特定分支
+
+git checkout -b <branchname>  以当前分支为基础新建分支
+
+git fetch --prune origin   清除远程已经不存在的分支的跟踪分支

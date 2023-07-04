@@ -1,0 +1,175 @@
+cmake_minimum_required(VERSION 3.0.2) #对于cmake版本的最低版本的要求
+project(OBS_DETECT_MODULE)#建立的工程名，例如源代码目录路径的变量名为CH_DIR
+                #工程存储目录变量名为CH_BINARY_DIR
+#要求工程依赖的PCL最低版本为1.3，并且版本至少包含common和IO两个模块  这里的REQUIRED意味着如果对应的库找不到 则CMake配置的过程将完全失败，
+#因为PCL是模块化的，也可以如下操作：
+#           一个组件  find_package(PCL 1.6 REQUIRED COMPONENTS  io)
+#           多个组件  find_package(PCL 1.6 REQUIRED COMPONENTS commom io)
+#           所有组件  find_package(PCL 1.6 REQUIRED ) 
+include(CTest)
+enable_testing()
+
+set(CPACK_PROJECT_NAME ${PROJECT_NAME})
+set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
+
+#如果设置为"Release"模式，设置断点后在调试时是默认无效的，进入调试后，断点会变为空心断点，程序不会在任何断点处停下
+set(CMAKE_BUILD_TYPE "Debug")
+#set(CMAKE_CXX_FLAGS "-O3")#一定要注释掉该句（或不写），否则“任何级别的优化都将带来代码结构的改变，将会使目标代码的执行顺序变得面目全非，导致调试信息严重不足
+include(CPack)
+
+add_compile_options(-std=c++11)
+
+
+# export CMAKE_PREFIX_PATH=/home/nvidia/librealsense:$CMAKE_PREFIX_PATH
+set(CMAKE_PREFIX_PATH "/home/nvidia/librealsense" ${CMAKE_PREFIX_PATH})
+# set(OpenCV_DIR  /usr/lib/aarch64-linux-gnu/cmake/opencv4)
+# set(PCL_DIR /usr/lib/aarch64-linux-gnu/cmake/pcl)
+# set(realsense2_DIR /usr/local/lib/cmake/realsense2)
+## Find catkin macros and libraries
+## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
+## is used, also find other catkin packages
+find_package(OpenCV REQUIRED)
+find_package(CUDA 10.2 REQUIRED)
+find_package(PCL REQUIRED)
+# find_package(realsense2 REQUIRED)
+
+
+#下面的语句是利用CMake的宏完成对PCL的头文件路径和链接路径变量的配置和添加，如果缺少下面几行，生成文件的过程中就会提示
+#找不到相关的头文件，在配置CMake时，当找到了安装的PCL，下面相关的包含的头文件，链接库，路径变量就会自动设置
+#                    PCL_FOUND:如果找到了就会被设置为1 ，否则就不设置
+#                    PCL_INCLUDE_DIRS:被设置为PCL安装的头文件和依赖头文件的目录
+#                    PCL_LIBRARIES:被设置成所建立和安装的PCL库头文件
+#                    PCL_LIBRARIES_DIRS:被设置成PCL库和第三方依赖的头文件所在的目录
+#                    PCL_VERSION:所找到的PCL的版本
+#                    PCL_COMPONENTS:列出所有可用的组件
+#                    PCL_DEFINITIONS:列出所需要的预处理器定义和编译器标志
+
+# aux_source_directory(
+#     src/humandetect _SOURCES
+# )
+# 自动扫描指定路径下的源文件，并将它们添加到变量 _SUB_SOURCES 中
+aux_source_directory(
+    src/humandetect/src _SUB_SOURCES
+)
+aux_source_directory(
+    src/humandetect/common _COMMON_SOURCES
+)
+
+# 设置头文件的搜索路径 gcc -I
+include_directories(
+  include
+  ${CUDA_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
+  # ${realsense2_INCLUDE_DIRS}
+  /home/nvidia/librealsense/include/librealsense2
+  /home/nvidia/librealsense
+  /home/nvidia/librealsense/include
+  ${PCL_INCLUDE_DIRS}
+  /home/nvidia/librealsense/third-party
+  /usr/local/cuda-10.2/targets/aarch64-linux/include
+  src/humandetect/common
+  src/humandetect/include
+  src/humandetect/include/openni
+  src/humandetect/include/eigen-3.4.0
+)
+
+# 设置目标库文件的搜索路径 gcc -L
+link_directories(
+  ${PCL_LIBRARIES_DIRS}
+  /usr/lib
+  /usr/local/lib
+  # /usr/lib/aarch64-linux-gnu
+  /usr/local/cuda-10.2/targets/aarch64-linux/lib
+  # src/humandetect/openni/libs
+)
+add_definitions(${PCL_DEFINITIONS})
+
+
+#message("***$$include folder: "${catkin_INCLUDE_DIRS})
+
+#这句话告诉CMake从单个源文件pcd_capture建立一个可执行文件
+add_executable(environment_wj src/environment.cpp
+# src/processply/processply.cpp 
+src/intelreader/intel_reader.cpp
+src/render/render.cpp
+src/DWA/dwa_module.cpp
+src/DWA/trans_module.cpp
+src/DWA/simple_pathplaning.cpp
+src/serialsend/serialsend.cpp src/serialsend/uart-drv-linux.cpp src/serialsend/uart.c 
+src/readimu/readimu.cpp src/readimu/imu_data_decode.c src/readimu/packet.c src/readimu/ch_serial.c
+src/blindcompensate/blindcompensate.cpp
+src/occupymap/occupymapsimple.cpp
+src/datasave/datasave.cpp
+src/humandetect/humandetect.cpp ${_SUB_SOURCES} ${_COMMON_SOURCES}
+)#后面的文件地址是以CmakeLists.txt所在文件夹为根目录出发寻找的
+
+# add_executable(get3dcoordtest src/get3dcoordtest.cpp
+# src/intelreader/intel_reader.cpp
+# src/processply/processply.cpp 
+# src/DWA/dwa_module.cpp
+# src/serialsend/serialsend.cpp src/serialsend/uart-drv-linux.cpp src/serialsend/uart.c
+# )
+
+# add_executable(dwatest src/dwatest.cpp
+# src/DWA/dwa_module.cpp
+# src/serialsend/serialsend.cpp src/serialsend/uart-drv-linux.cpp src/serialsend/uart.c
+# )
+
+# add_executable(multi_cam src/multi_cam.cpp
+# src/intelreader/intel_reader.cpp
+# src/humandetect/humandetect.cpp ${_SUB_SOURCES} ${_COMMON_SOURCES}
+# )
+
+
+## Specify libraries to link a library or executable target against
+#虽然包含了PCL的头文件，因此编译器知道我们现在访问所用的方法，我们也需要让链接器知道所链接的库
+target_link_libraries(environment_wj
+  ${LIBS}
+  ${CUDA_LIBRARIES}
+  ${OpenCV_LIBS} 
+  # ${realsense2_LIBRARY}
+  ${PCL_LIBRARIES}
+  /usr/local/lib/librealsense2.so
+  # cudart
+  cudnn
+  # cublas
+  nvinfer
+  nvinfer_plugin
+  nvparsers
+  nvonnxparser
+  OpenNI2
+
+)
+
+message(${PCL_LIBRARIES})
+message(${PCL_LIBRARIES})
+
+# target_link_libraries(multi_cam
+#   ${LIBS}
+#   ${CUDA_LIBRARIES}
+#   ${OpenCV_LIBS} 
+#   ${realsense2_LIBRARY}
+#   ${PCL_LIBRARIES}
+#   cudart
+#   cudnn
+#   cublas
+#   nvinfer
+#   nvinfer_plugin
+#   nvparsers
+#   nvonnxparser
+#   OpenNI2
+# )
+
+# target_link_libraries(get3dcoordtest
+#   ${OpenCV_LIBS} 
+#   ${realsense2_LIBRARY}
+#   ${PCL_LIBRARIES}
+# )
+
+# target_link_libraries(dwatest
+#   ${OpenCV_LIBS} 
+#   ${realsense2_LIBRARY}
+#   ${PCL_LIBRARIES}
+# )
+
+

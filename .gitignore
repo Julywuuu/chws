@@ -1,0 +1,12 @@
+.vscode
+backup/*
+*.cmake
+script/*
+build/CMakeFiles/*
+build/environment*
+testfile/*
+build_backup/*
+src/humandetect/models/*
+src/humandetect/openni/libs/OpenNI2/*
+*.o
+src/wjquiz/*

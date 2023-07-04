@@ -1,0 +1,623 @@
+#20221116
+（1）setparameter都设置为end2goal_cost优先
+
+
+（2）x方向设置为无法向后运动
+
+
+（3）x方向，y方向,z方向最大速度和加速度设置地更低
+
+#20221117
+（1）减少数据保存和可视化，提高帧率；明显感受到跟人速度更快
+（2）将相机安装高度减少至0.38m——>盲区约0.6m；效果还行
+
+(3)
+float robot_radius = 0.4;//圆形作粗碰撞检测,将碰撞检测半径减小至0.4; 
+float predict_time = 1.0//轨迹预测时间减少至1s
+
+无明显效果，还是可能会在障碍物前停止---可尝试精细化碰撞检测，建立矩形模型
+小车在障碍物前停止为什么dwa不采样横向速度绕过障碍物？————>因为障碍物已经在小车的碰撞检测范围内，从小车出发向外的任何一个点，都会"碰到"障碍物
+predict_time设置太短不行——>一方面容易导致小车跟人的速度更快（end2goal_cost），容易在进入障碍物范围时无法反应过来
+另一方面，太短使得小车无法提前对障碍物做出规避，导致小车进入障碍物范围内
+
+@注意：遮挡小车相机视野使之停止，也要在相机采集范围内，即0.3-3m
+思考if(eval.tras_nums == 0)没有合适轨迹时应该怎么做--->是否允许向后运动
+
+(4)
+float robot_radius = 0.2;
+float predict_time = 3.0
+基本失去避障效果，且小车速度很慢；
+
+（5）
+float robot_radius = 0.4;
+float predict_time = 1.5//提升速度,效果还行
+
+（6）
+思考if(eval.tras_nums == 0)没有合适轨迹时应该怎么做--->是否允许向后运动
+//if(eval.tras_nums == 0){
+    //cout<<"障碍物较密集、较近或速度较快,需减速"<<endl;
+    @optimal_speed[0] = -0.1;
+    //optimal_speed[1] = this->get_brake_speed(dw[2],dw[3]);
+    //optimal_speed[2] = cal_w;//cal_w
+    //return optimal_speed;
+//}
+
+if(x[3]<this->_cfg.min_speedx){// @optimal_speed[0] = -0.1;需要同时更改dw函数，因为-0.1是超出最小速度限制的，不改dw会出错
+    dw[0] = fmax(x[3], x[3] - this->_cfg.max_accelx * this->_cfg.dt);
+    dw[1] = fmin(this->_cfg.max_speedx, x[3] + this->_cfg.max_accelx * this->_cfg.dt);
+}
+
+//角速度、角加速度考虑增大
+float max_yaw_rate = 40.0 * M_PI / 180.0;//30--->40
+float max_delta_yaw_rate = 20 * M_PI / 180.0;//15--->20
+(效果好多了,由于可以往后退，可以完成避障动作了)
+（注意人/目标物体也算障碍物的一种，所以离人体太近会导致小车后退至碰撞安全范围，
+且由于代码逻辑是：只要采取了小于0的速度vx，则该次采样允许在[vx,vx+max_accelx*dt]内进行，显然这时分两种情况：
+①离人体太近，导致采取了小于0的速度vx，那么小车回退回到安全范围后，由于此时速度仍小于0，仍可在小于0的区间[vx,vx+max_accelx*dt]内采样，
+显然由于小车目标位置还在小车后面（安全距离一般小于目标位置距离），所以在小于0的区间采样时仍会选择小于0的速度以使得小车向后运行，
+直到到达目标位置附近
+②离障碍物太近而离人体较远，导致采取了小于0的速度vx，那么小车回退回到安全范围后，就不再有采样小于0的速度的驱动力（除非此时仍然所有路径都会碰到障碍物，
+即trans_nums=0）,而是会有朝前【vx>0】的驱动力（当然，若同时离人体也太近，则同①，也会后退）
+
+
+
+
+
+#20221118
+今日目标：调参看看效果；把羿坤那边的人体获取模块调一调；试一下单片机供电和正常供电运算速度问题/人体模块能否正常运行
+其他：看跟随避障相关论文及其应用/java or leecode
+
+(1)
+obsdetect4dwa中的相机高度更正
+(好像效果差不多)
+(2)
+float robot_radius = 0.5;
+//float predict_time = 1.5(不变)
+//角速度、角加速度考虑增大
+float max_yaw_rate = 60.0 * M_PI / 180.0;//40--->60
+float max_delta_yaw_rate = 30 * M_PI / 180.0;//20--->30
+会飘了
+
+（3）
+//float robot_radius = 0.5;(不变)
+//float predict_time = 1.5(不变)
+//角速度、角加速度考虑增大
+float max_yaw_rate = 40 * M_PI / 180.0;
+float max_delta_yaw_rate = 20 * M_PI / 180.0;
+效果和#20221118的（6）差不多
+
+(4)
+使用结构体获取返回的数据
+效果不变
+
+(5)
+/*设定机制处理：机器人陷入速度为0无法动弹，且离目标点还有一定距离的情况
+类似Vx，W空间运动时，调整转向，但在这里行不通，因为影响相机朝向
+*/
+float dist_to_goal = sqrt(pow(x[0]-robo_goal[0],2)+pow(x[1]-robo_goal[1],2));
+float abs_speed = sqrt(pow(speed[0],2)+pow(speed[1],2));
+if((abs_speed < dwaplanning.get_cfg().robot_stuck_flag_cons)&&(dist_to_goal > 0.1)){
+    std::cout<<"机器人陷入局部最优值,正在调整..."<<std::endl;
+    speed[0] = -0.1;
+}
+效果不怎么好（和（4）差不多）
+
+（6）
+更改侧向移动速度估计无效
+//为什么不朝侧边采样，而是维持原地不动呢？--->因为侧边移动相对于原地不动离目标点更远了
+①是否尝试增加全局路径规划
+②尝试增加原地不动时的处理机制，类似（5）
+float dist_to_goal = sqrt(pow(x[0]-robo_goal[0],2)+pow(x[1]-robo_goal[1],2));
+float abs_speed = sqrt(pow(speed[0],2)+pow(speed[1],2));
+if((abs_speed < dwaplanning.get_cfg().robot_stuck_flag_cons)&&(dist_to_goal > 0.1)){
+    std::cout<<"机器人陷入局部最优值,正在调整..."<<std::endl;
+    speed[0] = -0.1;
+    speed[1] = -0.1;//
+}
+(效果不好，会在局部最优点震荡)
+
+
+（7）
+放松角度约束，使得目标点位置变为离障碍物最远的点并在到达目标点附近后视为避过障碍物，这时再加上角度约束
+//陷入局部最优点时
+    float dist_to_goal = sqrt(pow(x[0]-robo_goal[0],2)+pow(x[1]-robo_goal[1],2));
+    float abs_speed = sqrt(pow(x[3],2)+pow(x[4],2));
+    if((abs_speed < dwaplanning.get_cfg().robot_stuck_flag_cons)&&(dist_to_goal > 0.1)){
+        std::cout<<"机器人陷入局部最优值,正在调整..."<<std::endl;
+        dwaplanning.change_robo_goal(M_PI/3);//放松角度约束，改变机器人目标位置，直到到达目标点附近,,在setparameter重置角度约束
+        //要是还是不行，考虑dwaplanning.change_robo_goal(x),x设置为一个范围内的量，遍历该范围使得小车脱离局部最优值
+        delete []robo_goal;
+        float * robo_goal = dwaplanning.calc_robo_goal(peo,x,obs_position,obs_nums);//参数变了，重新计算robo_goal
+        //不是必要立即重新计算robo_goal,因为如果真的是局部最优值的话，当前循环得到的速度仍然不会动
+    }
+
+change_robo_goal函数的变动;
+
+setparameter::
+if(this->_peo.optimal_relative_angel != 0){
+    this->_peo.optimal_relative_angel = 0;
+    std::cout<<"最优相对夹角已重置..."<<std::endl;
+}
+
+
+#20221121
+（1）
+①float * get_speed(DWA &dwaplanning, robo_state x,float peo[3],float (*obs_position)[2],int obs_nums)
+DWA对象变成引用，使得对DWA对象的操作可以保存下来
+
+②取robo_goal旁边像素与robo_goal像素构成向量，从而计算垂直于平面的法向量作为人体朝向
+    //计算人体朝向
+    float * coord1 = pointProcessorI->get_3d_camera_coordinate(inputCloudI,target_pixel_coord[0]-2,target_pixel_coord[1]);//横向偏移两个像素的点
+    float temp_theta = M_PI/2 + atan2(-coord1[0] + coord[0], -coord1[2] + coord[2]);
+    float peo_theta = atan2(sin(temp_theta), cos(temp_theta));
+    std::cout<<"peo_theta = "<<peo_theta/M_PI*180 <<" °"<<std::endl;
+    float peo[3] = {-coord[2],-coord[0],peo_theta};
+
+③发现#20221118的（7）无法做到很好的处理局部最优点————
+//判断逻辑需要优化，否则容易造成机器人反复陷入局部最优点，震荡不收敛
+//(另一方面，由于人的朝向加入计算后容易给目标位置带来非线性震荡，使得机器人脱离局部最优点更容易了,于是暂时不优化这个)
+把局部最优点的处理注释了，setparameter::也重置了
+
+
+（2）
+
+float max_yaw_rate = 32.0 * M_PI / 180.0; //40--->32 [rad/s]
+float max_delta_yaw_rate = 16 * M_PI / 180.0;   //20--->16
+效果还行
+
+（3）
+param_rg设置为0，则可以识别避开较低矮的障碍物，但运行速度明显变卡慢（太多杂点被识别为障碍物）
+param_rg = 0.1还是比较流畅的
+
+
+目标剩余：把羿坤那边的人体获取模块调一调；人体模块小车供电时能否正常运行
+其他剩余：看跟随避障相关论文及其应用/java or leecode；
+调参剩余：尝试增加全局路径规划？（要是只在陷入局部最优值时使用全局路径规划，则还是会涉及到如何判定陷入局部最优的问题）
+（要是全局使用，则涉及到运行速度是否支持的问题）
+坐标转换模块
+costmap模块
+人体位置预测
+
+
+
+#20221125
+用于人体了;降低速度
+float max_speedx = 0.4;  //[m/s]0.6
+float min_speedx = -0.2; //0
+
+
+#20221128
+(1)增加一点速度
+float max_speedx = 0.6;//0.4
+float min_speedx = -0.4;//-0.2
+
+    if(eval.tras_nums == 0){
+        cout<<"障碍物较密集、较近或速度较快,需减速"<<endl;//即在dw窗口中选择最小速度
+        optimal_speed[0] = this->get_brake_speed(dw[0],dw[1]);//-0.1【既然已经允许向后运动就不需要给定负向速度了】
+
+    }
+效果一般
+
+（2）
+
+    float min_speedx = -0.2;  //-0.4  # [m/s]
+    float max_yaw_rate = 40.0 * M_PI / 180.0; //32  [rad/s]
+    float max_delta_yaw_rate = 20 * M_PI / 180.0;   //16 [rad/ss] 
+
+    if(eval.tras_nums == 0){
+        cout<<"障碍物较密集、较近或速度较快,需减速"<<endl;//即在dw窗口中选择最小速度
+        optimal_speed[0] = -0.1;
+
+    }
+
+（3）    
+
+    float min_speedx = -0.3;  //-0.2  # [m/s]
+    float max_yaw_rate = 32.0 * M_PI / 180.0; //40  [rad/s]
+    float max_delta_yaw_rate = 16 * M_PI / 180.0;   //20 [rad/ss] 
+
+    float v_resolutionx = 0.02;  //0.01  # [m/s]
+    float v_resolutiony = 0.02;  //0.01  # [m/s]
+    float yaw_rate_resolution = 1.5 * M_PI / 180.0;  //1  # [rad/s]
+
+    float predict_time = 1.2;//1.5
+    
+(4)
+    float max_speedx = 0.5;    //0.6;  //[m/s]
+    float min_speedx = -0.25;  //-0.3  # [m/s]
+
+
+(5)
+
+    float max_speedx = 1;
+    float dt = 0.2;
+    DWA::setparameter(){
+        this->_cfg.max_speedx = 1(0.2);
+    }
+    (效果还行)
+
+(6)
+
+    float max_speedx = 0.6;
+    DWA::setparameter(){
+        this->_cfg.max_speedx = 1->0.6->0.3;(>1m----0.2-1m----<0.2m)
+    }
+    (效果不好)
+
+(7)
+
+    float max_speedx = 0.8;
+    DWA::setparameter(){
+        this->_cfg.max_speedx = 0.8(0.2);
+    }
+
+
+20221214
+(1)float min_speedx = -0.8; （因为后面有传感器了所以可以增大负向速度）
+（2）pointProcessorI->VGDownSampling(cloud_P2G,0.04);（网格改成0.04m，否则障碍物点数过多，速度更新过慢）
+
+
+
+20221215
+(1)float robot_radius = 0.65;(增加碰撞距离，避免小车后退时，越过最小深度距离使得点云采集失效)
+(2)optimal_speed[0] = this->get_brake_speed(dw[0],dw[1]);//optimal_speed[0] = -0.1(后方有传感器了，不能乱给-0.1)
+
+(3)①obs_trans(back_obs_position, back_obs_nums, back2world);//转换至机器人中间坐标系，方便碰撞检测
+    ②float robot_radius = 0.4;//0.65(坐标系转换后，可以用更小半径进行碰撞检测)
+
+(4)发现一个使得有效trajetory数目为0的情形：由于轨迹评价初始点是机器人当前位置
+那么如果机器人当前位置处在碰撞检测内部（可能由于点云的跳动/没来得及刹车等跑进去了），那么所有轨迹都会失效
+解决：不考虑机器人当前位置出发，未超出特定圆的轨迹点（特定圆指以机器人当前位置为圆心，特定长度为半径的圆）
+
+①astra最小深度距离约为0.38m，所以碰撞检测距离设置为0.5m,留一点余量，避免障碍物丢失后往后冲
+float robot_radius = 0.5; //0.4
+②0.5-0.38=0.12m，将上述的特定长度（称为轨迹保护半径）设置为0.15m稍大于0.12，这样无论如何都可以避免轨迹发生上述失效
+③轨迹保护范围设0.15有点大，可能造成最大速度，形成的轨迹都没有办法超出轨迹保护范围（最大速度0.12×1.2=0.144）设为0.1试一试
+
+
+
+20221219
+（1）①加入了人体朝向计算机制【低速时使用人体朝向，高速时使用速度方向】在偏静止下表现还行（舍弃,有人体朝向容易使得小车震荡，后续要是想让小车直行后退考虑其他方法）；
+（高速时使用速度方向，和人体位置预测一样，同样会遇到相对坐标系下不准确的问题，见20221220（1））
+
+    ②加入了人体位置预测机制（效果不明显）；
+    ③加入了评价函数参数改变机制（会让小车急停急加速）
+
+
+20221220
+（1）使用更长时间的人体位置预测+单一评价参数（end2goalcost）
+
+效果不好，原因是：相对坐标系下这个不好做，比如人体静止但和机器人距离小于1.8m时，机器人会往后退，在机器人坐标系中，人体在向后退，有向后退的速度
+于是预测人体下一个位置向后运动，但人体实际上静止，那么抑制机器人到达目标点（1.8m）
+
+
+(2)速度小于0.1则predict_peo[2] = INFINITY未执行，那么可用关节点向量计算出的人体朝向，纠正机器人-人体相对位置
+// if(sqrt(x[3]*x[3]+x[4]*x[4]) > 0.1){//0.1不能设太大
+//     predict_peo[2] = INFINITY;//速度较大时，关节点向量计算出的人体朝向不可用
+// }
+
+（3）评价函数参数改变机制------- /*进入指定距离时进行参数切换*/
+    float dist_to_goal = sqrt(pow(x[0]-robo_goal[0],2)+pow(x[1]-robo_goal[1],2));
+    if(dist_to_goal < 0.35){
+        this->_cfg.start2goal_cost_gain = 0;
+        this->_cfg.end2goal_cost_gain = 1;
+    }
+    else{
+        this->_cfg.start2goal_cost_gain = 1;
+        this->_cfg.end2goal_cost_gain = 0;
+    }
+    效果还行，后退比没有时快
+
+
+20221228
+(1)使用深度图直接获取障碍物位置信息
+①速度明显提升(整体平均61.7ms)
+②float robot_radius = 0.6;//0.5，增加碰撞检测距离，因为现在障碍物边缘有0.04的不确定性（障碍物检测时设置的障碍物之间最小距离）
+
+(2)
+DWA::setparameter
+/*速度进入指定范围时进行参数切换*/
+    float speed = sqrt(x[0]*x[0]+x[1]*x[1]);
+    if(speed < 0.25){
+        this->_cfg.dt = 0.4;
+        this->_cfg.predict_time = 2.4;
+    }
+    else{
+        this->_cfg.dt = 0.2;
+        this->_cfg.predict_time = 1.2;
+    }
+
+(3)后续可考虑：
+障碍物检测使用多个高度（奇数列0.05/偶数列0.10）
+
+
+
+
+
+
+@@坐标变换，优化碰撞检测（got！）
+@@优化轨迹评价，设置轨迹保护机制DWA::calc_obstacle_cost（got！）
+@@机器人目标位置确定方式优化DWA::calc_robo_goal_pro（暂时不需要，后续在圆弧上找一个和障碍物距离大于碰撞距离的点，而后可结合全局路径规划使Dwa规划出到达该目标点的速度即可）
+@@人体运动意图，保证跟得上（效果不好...）
+@@优化地图(或许栅格地图，只考虑障碍物边缘...)（got！但不是用栅格地图，而是深度图获取障碍物+降采样减少障碍物数目）
+@@深度图获取障碍物-->减少点云耗时、减少获取障碍物耗时、减少DWA耗时（got！）
+
+
+20230105
+一些可能的优化方法
+（1）判断算法检测人体关节点效果满意前提下，人体离相机的最远/最近距离，用此距离作为跟随距离
+（准确的说，当机器人位于人体前方的时候，应该用最远距离，因为此时人体和机器人有距离缩小的趋势；
+反之，机器人和人体之间距离有扩大的趋势，应当使用更近的距离，使得机器人更好的跟随人体；
+而当人体保持不动时，应当使用适中的距离/最远距离）
+
+具体实现：
+if(dist>max_dist+0.3){//0.3是留出一定的裕度，防止机器人稳定在max_dist附近时吗目标距离产生波动
+    //说明机器人和人体之间距离有扩大的趋势
+    goal=dist_less;
+}
+if(dist<dist_less){
+    goal=max_dist;
+}
+
+效果不好
+
+(2)调整最大速度
+
+float max_speedx = 1.1;//0.8
+float min_speedx = -1.1;//-0.8
+float max_speedy = 0.4;//0.2          
+float min_speedy = -0.4;//-0.2
+
+&&&效果还行
+
+
+
+
+20230106
+(1)
+/*机器人和人体距离进入指定范围时进行参数切换*/
+float dist_to_peo = sqrt(pow(x[0]-peo[0],2)+pow(x[1]-peo[1],2));
+if(dist_to_peo < this->_peo.optimal_relative_dist){
+    //说明机器人和人体之间距离有减少的趋势
+    this->_cfg.start2goal_cost_gain = 1;
+    this->_cfg.end2goal_cost_gain = 0;
+}
+用更改评价函数参数，代替原先的更改跟随距离，效果好点
+
+
+（2）更改加速度，特别是后退？？
+float max_accelx = 1.4;  //0.6
+&&&机动性能增加，但由于加速度增大DWA窗口增大，时间增加，所以整体运行速度慢了约30ms；这使得跟随人体时性能几乎没有提升
+于是减少x方向速度的分辨率试试
+float v_resolutionx = 0.04;  //0.02
+&&&运行速度恢复到原先的水平，约70-80ms，跟随人体性能提升不明显（因为原先性能就已经接近小车极限1m/s）
+
+（3）使用多个障碍物扫描高度？？
+&&&单个高度对大多数情况足够了；三个高度会减慢障碍物获取速度，增加障碍物数目减慢DWA速度，总的来说会减慢运行速度20-30ms左右
+
+
+
+（4）适当增加跟随距离，理论上可以加快跟随速度？？
+float optimal_relative_dist = 2.6;//2.1
+&&&人体速度约1m/s时，机器人可以跟上（机器人最大速度1.07m/s）
+
+(4-补充)2.6时虽然可以获取人体位置，关节点也可以获取，但运动中，采集的腿部关节点位置容易互换导致步态识别失效，因此跟随距离改为2.1;
+就学术论文而言，不考虑步态识别情况下，显然可以采用如2.6这样更大的跟随距离，使得机器人不容易丢失跟随目标
+$$$$float optimal_relative_dist = 2.1;//2.6
+
+（5）深度图降采样（例如去除奇数行和奇数列）
+&&&单个高度时候没太大必要省这个时间，因为一定程度上会减低精度
+
+
+$$$$①实验过程中发现astra相机对玻璃表面的识别效果不好，会出现无法得到可靠深度图的情况
+$$$$②使用深度图获取障碍物位置时，对相机的水平安装精度要求比较高，注意检查；否则会出现把地面识别成障碍物的情况
+
+
+20230116
+（1）添加髋关节平面计算人体朝向函数（不好用）
+从采集的图像来看，估计原因是：一旦小车处于侧面，关节点2、3所在位置不是准确的髋关节位置，而是位于人体侧面腰部位置，
+提取此位置所在平面，计算的人体朝向不是期望的人体朝向，于是小车一直处于人体侧面，无法回正
+
+（2）提高了关节点识别网络输入分辨率(速度降低+关节交换减少)
+
+（3）添加关节点渲染代码/障碍物位置渲染代码（astra需要插拔后才可正常捕获RGB）
+
+（4）使用膝关节代替髋关节计算人体位置、均值滤波尝试（不好用）
+
+
+
+
+20230206
+(1)增加读取imu的类
+
+(2)使用羿坤代码读取人体朝向
+
+(3)增加碰撞检测的函数bool crash_avoid(float (*obs_position)[2],int obs_nums)
+if(-0.6<obs_position[j][0]&&obs_position[j][0]<0&&-0.25<obs_position[j][1]&&obs_position[j][1]<0.25){
+
+(4)增大碰撞检测距离 
+float robot_radius = 0.65;//0.6圆形作粗碰撞检测
+
+
+
+20230207
+（1）增大碰撞检测距离 
+float robot_radius = 0.7;//0.65圆形作粗碰撞检测
+
+(2)增加保存关节点像素坐标到txt的代码
+
+（3）人体位置获取优化
+peo[1]即y方向使用均值，而非单一膝关节的值
+peo[1] = -(point1.x+point4.x)/2.0;
+
+（4）对羿坤代码的人体朝向进行稳态误差补偿
+current_peo[2] = atan2(sin(current_peo[2] + 8*M_PI/180), cos(current_peo[2] + 8*M_PI/180));//补偿稳态偏差
+
+补偿后效果还行
+
+
+
+20230209
+(1)减小碰撞检测距离
+float robot_radius = 0.6;//0.7圆形作粗碰撞检测
+对应crash_avoid为后方0.7m
+
+测试中发现小车速度较慢，无法达到预期速度
+原因是(2)
+
+(2)setparameter()中的错误
+float speed = sqrt(x[0]*x[0]+x[1]*x[1]);【错误的速度计算】
+float speed = sqrt(x[3]*x[3]+x[4]*x[4]);
+发现：速度快的时候，this->_cfg.predict_time不能设置长了
+否则，会因为避免障碍物的机制，导致速度最大值对应的轨迹始终会碰到障碍物，就不会被选中
+
+(3)
+y方向速度增大
+float max_speedy = 0.7;//0.4           
+float min_speedy = -0.7;//-0.4 
+float max_accely = 0.8;//0.3
+效果不好，取消
+
+(4)当前离人体距离小于最优距离 and 距离持续减小 and 上一发送速度Vx<0
+这时进行人体位置预测
+Vx<0说明小车后退
+ 有一定效果
+
+(5)发现后退时总是由于走廊狭窄，障碍物距离位于0.5m-0.9m以内；
+速度较高+判断碰撞太严格(0.6m)
+小车判断1.2s后的障碍物的话预测轨迹很容易碰到（1.2s*0.5 = 0.6m,加上碰撞检测0.6m，那么容易碰到）
+
+方案：①优化碰撞检测，考虑使用矩形检测
+先减小碰撞检测距离试试
+float robot_radius = 0.4;//0.6圆形作粗碰撞检测
+②后退时,速度较高时,轨迹碰撞检测时在更近的距离内检测即可，远处会碰到暂时不用管
+先减小检测时间
+setparameter()中
+if(x[3] < 0 && speed > 0.3){
+    this->_cfg.dt = 0.2;
+    this->_cfg.predict_time = 1.0;        
+}
+----效果好些
+
+
+
+20230210
+(1)角加速度设低点
+(或者只有偏差太大时才给个纠正，否则不纠正) ---->float theta_min = asin(0.4/1.9);//y方向(横向)的允许偏差/optimal_relative_dist
+(2)由(1)更进一步地，如果永不纠正，那么就是不转动，只平动；将
+cal_w = dwaplanning.Piecewise_linear_model(theta);
+cal_w = 0;
+
+用(1)(2)效果更不好，因为实际情况下小车存在打滑现象，必须需要使用转动纠正
+
+(3)不设置缓冲区，每个角度偏差都纠正
+float theta_min = 0;
+和之前的0.05差不多
+
+(4)纠正朝向稳态误差似乎有问题
+current_peo[2] = atan2(sin(current_peo[2] + 4*M_PI/180), cos(current_peo[2] + 4*M_PI/180));//补偿稳态偏差(8°变4°)
+
+******实在不行用年前的没有朝向的代码，跟随效果还行啊其实
+但要更改：人体位置y方向获取、setparameter中的速度计算错误、深度图获取优化、注释掉调试信息等
+
+
+
+20230213
+(1)
+float robot_radius = 0.55;//0.4,
+对应crash_avoid为后方0.55m,效果好点
+(2)增加稳态偏差补偿4——>7
+current_peo[2] = atan2(sin(current_peo[2] + 10*M_PI/180), cos(current_peo[2] + 10*M_PI/180));//4补偿稳态偏差
+效果还行
+(3)防止初始位置因人体迈步出现朝向测量错误
+else if(speed<0.1 && delta > -10 * M_PI / 180.0 && delta < 10 * M_PI / 180.0){//速度太小,且人体朝向偏差较小，人体朝向视为无效
+    //cout<<"初始运动,人体朝向视为无效"<<"\n";
+    float k = sqrt(pow(dist,2)/(pow(x[0]-peo[0],2)+pow(x[1]-peo[1],2)));
+    robo_goal[0] = k*(x[0]-peo[0]) + peo[0];
+    robo_goal[1] = k*(x[1]-peo[1]) + peo[1];              
+}
+效果有改善，但有(4)了更有效，故舍弃
+
+(4)增加髋关节膝关节朝向差计算；朝向差大时视为迈腿，朝向无效
+float delta_direction = fabs(atan2(-joints_coord[2].x + joints_coord[3].x, -joints_coord[2].z + joints_coord[3].z) - atan2(-joints_coord[1].x + joints_coord[4].x, -joints_coord[1].z + joints_coord[4].z));
+delta_direction = delta_direction/M_PI*180.0 > 90 ? delta_direction/M_PI*180.0 - 180 : delta_direction/M_PI*180.0;
+std::cout <<"delta_direction = "<<delta_direction<<"\n";    
+if(delta_direction > 30){//迈腿时,设为无有效朝向
+    current_peo[2] = INFINITY;
+}
+
+(5)打印delta看出，使用±20即可
+if(delta > 20 * M_PI / 180.0 || delta < -20 * M_PI / 180.0){//太侧面，人体朝向视为无效
+    //cout<<"delta = "<<delta/M_PI*180<<"° ,太侧面,人体朝向视为无效"<<"\n";
+    float k = sqrt(pow(dist,2)/(pow(x[0]-peo[0],2)+pow(x[1]-peo[1],2)));
+    robo_goal[0] = k*(x[0]-peo[0]) + peo[0];
+    robo_goal[1] = k*(x[1]-peo[1]) + peo[1];            
+}
+(6)//迈腿时,设为无有效朝向，这不够；
+因为无效朝向时那么无有效纠偏量，小车一直歪；
+考虑设置成迈腿时刻前一时刻的朝向
+设置成了迈腿时刻前一段时间的平均朝向，效果还行
+
+
+
+20230221
+(1)DWA有时耗时长达30-40ms
+后续可能的排查：检测到耗时>30ms后停下，保存数据----当前小车速度，当前障碍物位置，当前小车状态，当前人体状态，dwa参数等，再排查分析执行慢的原因
+
+20230227
+(1)关节点信息保存函数（循环中保存至变量，循环结束后保存至文件）
+datasave.cpp
+效果较好
+
+(2)偶尔出现人体在画面内但无法识别的情况，对此进行补偿-----只有连续4帧以上的人体缺失才判定为人体离开画面
+/*人体偶然丢失后的补偿*/
+if(current_peo[0] != INFINITY && current_peo[1] != INFINITY){
+    continous_missing_times=0;
+}
+if(current_peo[0] == INFINITY || current_peo[1] == INFINITY){
+    continous_missing_times++;
+    if(continous_missing_times==1){
+        last_valid_peo[0] = previous_peo[0];last_valid_peo[1] = previous_peo[1];last_valid_peo[2] = previous_peo[2];
+    }
+}
+if(continous_missing_times>=1 && continous_missing_times<=4){
+    current_peo[0] = last_valid_peo[0];current_peo[1] = last_valid_peo[1];current_peo[2] = last_valid_peo[2];
+    std::cout <<"人体偶然丢失补偿，continous_missing_times = "<<continous_missing_times<<"\n";
+    //人体位置丢失帧数小于连续4帧时使用最后一帧的人体位置坐标代替人体位置
+}
+效果较好
+
+
+20230228
+(1)视频信息保存函数+障碍物信息保存函数
+
+（2）小车盲区补偿机制部署
+	效果----后退时不会撞到墙体了
+	局限---运行一段时间后无法动弹，可能是累计误差导致障碍物位于小车周围过近、过密
+
+
+20230301
+（1）**python逐帧、跳转播放障碍物信息
+    **可以画出前向、后向盲区，坐标系，以及特别标记补偿得到的障碍物颜色
+
+
+
+
+()简化DWA
+初步思路：PID给定速度，判断轨迹是否碰撞，碰撞则用dwa,否则pid
+
+
+后续设想：
+（1）使用ROS高性能通信中间件，优化运行速率
+（2）IMU+编码器进行定位（卡尔曼滤波？）---->使用ROS的slam建静态地图
+（3）轨迹规划算法改进，使用A*计算全局路径+DWA规划局部路径
+
+（4）建立绝对坐标系后，结合墙面方向/人体（初始）朝向/人体速度方向等约束小车轨迹走直线
+[相对/绝对坐标系下，相机-人体连线角度以及人体朝向角度之差delta，都反映了相机处于人体侧面的程度]
+[绝对坐标系下，可以结合绝对坐标系、墙面、人体初始朝向、速度等信息避免人体静止情况下识别越跑越偏到侧面，但其实在相对坐标系下，
+假设初始位置小车处于人体正面，那么把delta约束好使之无法跑偏也行]
+[绝对坐标系下，速度方向可以作为人体朝向]
+
+（）利用机器人到人的距离进行人体位置预测？
+
+###（5）客户端，实时查看地图/机器人轨迹/人体关节点/步态信息

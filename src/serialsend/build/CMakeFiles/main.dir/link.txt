@@ -1,0 +1,1 @@
+/usr/bin/c++   -std=c++11  -rdynamic CMakeFiles/main.dir/main.cpp.o CMakeFiles/main.dir/serialsend.cpp.o CMakeFiles/main.dir/uart-drv-linux.cpp.o CMakeFiles/main.dir/uart.c.o  -o main 
