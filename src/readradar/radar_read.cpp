@@ -63,7 +63,7 @@ void radar_reader::radar_destroy(){
 // 保存到很多0 是因为full_scan_data.data定义时 point_data_t data[POINT_CIRCLE_MAX_SIZE + 1]; 后面的参数是4097 ，每次都会写4097个点，要是后面全是0，0，0
 bool radar_reader::save_fulldata(){
     std::vector<point_data_t> points_cloud;
-
+    std::string radar_save_path = "/home/nvidia/gait-recognition-car-based-on-human-following/obs_detect_module/testfile/data/point_radra.txt";
     // 没有进行有效点的判断。有效点仅有vailtidy_point_num个
     // for(auto point: this->full_scan_data.data) {
     //     points_cloud.push_back(point);
@@ -72,7 +72,7 @@ bool radar_reader::save_fulldata(){
         points_cloud.push_back(full_scan_data.data[i]);
     }
 
-    int fd = open("point_cloud.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(radar_save_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) {
         perror("open");
         return -1;

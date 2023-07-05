@@ -9,7 +9,7 @@ bool is_exit = false;
 // 数据队列
 std::queue<imageinfo> imageinfo_queue_save;//用于主线程产生数据，线程3保存数据
 std::queue<imageinfo> imageinfo_queue_use;//用于主线程产生数据，线程1使用数据
-std::vector<mapinfo> mapinfo_vector_save;//用于线程1产生数据，线程1结束前统一保存数据(或考虑线程4并行保存数据--那么这里用queue)
+std::queue<mapinfo> mapinfo_vector_save;//用于线程1产生数据，线程1结束前统一保存数据(或考虑线程4并行保存数据--那么这里用queue)
 std::queue<mapinfo> mapinfo_vector_use;//用于线程1产生数据，线程2使用数据
 
 // 互斥锁和条件变量，用于同步线程间的操作，对应四个数据队列
@@ -17,17 +17,14 @@ std::mutex image_mutex_save,image_mutex_use,map_mutex_save,map_mutex_use;
 
 //image_cv---主线程通知线程1获取imageinfo_queue_use中的数据、主线程通知线程1可以退出;
 //map_cv---线程1通知线程2从mapinfo_vector_use末尾获取数据、主线程通知线程2可以退出；
-//save_cv---主线程通知线程3保存imageinfo_queue中的数据、主线程通知线程3可以退出；
-std::condition_variable image_cv,map_cv,save_cv;
+//save_img_cv---主线程通知线程3保存imageinfo_queue中的数据、主线程通知线程3可以退出；
+std::condition_variable image_cv,map_cv,save_img_cv,save_obs_cv;
 
 AstraReader astra_reader(forward2world);        //humandetect.cpp中extern了该对象
-AstraReader astra_reader_back(forward2world);
-
 
 // 线程1
-void generate_map_thread() {
+void generate_map_thread(imu::readimu& imudata, AstraReader& astra_reader,AstraReader& astra_reader_back) {
 
-    imu::readimu imudata("/dev/ttyUSB0");//初始化imu对象
     float yaw_origin, yaw;
     int continous_missing_times = 0;
     float last_valid_peo[3] = {INFINITY,INFINITY,INFINITY};
@@ -105,9 +102,10 @@ void generate_map_thread() {
 
         //由于没有多线程并行操作mapinfo_vector_save，所以这里应该不用锁也行，当然用了也不会有线程竞争，可以立即获得锁
         std::unique_lock<std::mutex> map_lock_save(map_mutex_save);//保存地图数据用于存入硬盘
-        mapinfo_vector_save.push_back(minfo);
+        mapinfo_vector_save.push(minfo);
         // std::cout << "线程1--save向量长度：" << mapinfo_vector_save.size()<< std::endl;
         map_lock_save.unlock();
+        save_obs_cv.notify_one();
 
         delete []current_peo;
         delete []obs_position;
@@ -116,18 +114,17 @@ void generate_map_thread() {
     }
 
     //****************保存mapinfo_vector_save的操作
-    saveobs(mapinfo_vector_save);
+    //saveobs(mapinfo_vector_save);
     std::cout<<"线程1--thread1_generatemap exited"<<std::endl;
 }
 
 // 线程2
-void path_planing_thread() {
+void path_planing_thread(serialsend& ser_front, serialsend& ser_back) {
 
     DWA dwaplanning;//初始化路径规划对象
     robo_state x = {0,0,0,0,0,0};//初始化机器人状态
     float stop[3] = {0,0,0};
-    serialsend ser_front("/dev/ttyTHS0",115200);//初始化串口对象 与 stm32通信的接口
-    serialsend ser_back("/dev/ttyTCU0",115200);//初始化串口对象 与 stm32通信的接口
+    
     while (true) {
         // 获取mapinfo_vector中的数据
         std::unique_lock<std::mutex> map_lock_use(map_mutex_use);
@@ -163,14 +160,14 @@ void path_planing_thread() {
 }
 
 // 线程3
-void save_data_thread() {
+void save_data_thread(string save_path) {
     timeb t_save_start,t_save_end;
     cv::VideoWriter video_writer;
-    video_writer.open("/home/nvidia/gait-recognition-car-based-on-human-following/obs_detect_module/testfile/forward.avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 16, cv::Size(640, 480));
+    video_writer.open(save_path, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 16, cv::Size(640, 480));
     while (true) {
         // 获取队列中的数据
         std::unique_lock<std::mutex> image_lock_save(image_mutex_save);
-        save_cv.wait(image_lock_save, [](){ return !imageinfo_queue_save.empty() || is_exit; });
+        save_img_cv.wait(image_lock_save, [](){ return !imageinfo_queue_save.empty() || is_exit; });
         if (is_exit && imageinfo_queue_save.empty()) {
             break;// 如果主线程已经退出并且队列为空，则退出循环
         }
@@ -200,10 +197,26 @@ void save_data_thread() {
 
         ftime(&t_save_end);
         double save_time = t_save_end.time + t_save_end.millitm * 1e-3 - (t_save_start.time + t_save_start.millitm * 1e-3);
-        // std::cout << "线程3--保存耗时save_time =  " <<dec<< save_time*1000 << std::endl;
+        //std::cout << "线程3--保存耗时save_time =  "<< save_time*1000 << std::endl;
     }
     video_writer.release();
     std::cout<<"线程3--thread3_savedata exited"<<std::endl;
+}
+
+//线程4：保存map数据
+void save_map_thread(){
+    while(true) {
+        std::unique_lock<std::mutex> map_lock_save(map_mutex_save);//保存地图数据用于存入硬盘
+        save_obs_cv.wait(map_lock_save,[](){return !mapinfo_vector_save.empty() || is_exit;});
+        if (is_exit && mapinfo_vector_save.empty()) {
+            break;// 如果主线程已经退出并且队列为空，则退出循环
+        }
+        mapinfo map_save = mapinfo_vector_save.front();
+        mapinfo_vector_save.pop();
+        map_lock_save.unlock();
+        saveobs_single(map_save);
+    }
+    std::cout<<"线程4--thread4_save_map exited"<<std::endl;
 }
 
 unsigned char running = 1;
@@ -214,6 +227,7 @@ static void sig_handle(int signo)
     sleep(2);
     std::exit(1);  // 有可能析构还没结束 就推出了！不行哦
 }
+
 void test_move(){
     std::string portname_bc = "/dev/ttyTHS0";
     std::string portname_ad = "/dev/ttyTCU0";
@@ -321,23 +335,35 @@ void test_move(){
     }
 }
 
-void testgit(){
-    std::cout<<"第二次测试git在分支上修改" <<std::endl;
-}
+
 
 int main(int argc, char *argv[]) {
     signal(SIGINT, sig_handle);
-	//创建子线程
-    std::thread thread1_generatemap(generate_map_thread);
-    std::thread thread2_pathplaning(path_planing_thread);
-    std::thread thread3_savedata(save_data_thread);
-   
-    // 雷达初始化
-    // uint8_t type = 0x0;  // 0x0,/**< serial type.*/
-    // int model = 1;       // ORADAR_MS200 = 1
-    //std::unique_ptr<radar_reader> radarreader(new radar_reader("/dev/ttyACM0", 230400, type, model));
-    radar_reader radarreader("/dev/ttyACM0", 230400);
 
+    // 初始化
+    int cycle_times = 1;
+    int save_queue_length;
+    timeb t_capture_start,t_capture_end;
+    timeb t_end;
+    
+    cv::Mat img_rgb, depth_forward, backrgb, depth_back;
+    bool IsCheck2CameraImg = true;
+
+    AstraReader astra_reader_back(forward2world);
+    imu::readimu imudata("/dev/ttyUSB0");           //初始化imu对象
+    serialsend ser_front("/dev/ttyTHS0",115200);    //初始化串口对象 与 stm32通信的接口
+    serialsend ser_back("/dev/ttyTCU0",115200);     //初始化串口对象 与 stm32通信的接口
+    radar_reader radarreader("/dev/ttyACM0", 230400);   // 初始化雷达
+
+
+	//创建子线程1234
+    std::string save_path = "/home/nvidia/gait-recognition-car-based-on-human-following/obs_detect_module/testfile/forward.avi";
+    std::thread thread1_generatemap([&imudata, &astra_reader, &astra_reader_back](){generate_map_thread(imudata, astra_reader, astra_reader_back);});
+    std::thread thread2_pathplaning([&ser_front, &ser_back](){path_planing_thread(ser_front, ser_back);});
+    std::thread thread3_savedata([save_path](){save_data_thread(save_path);});
+    std::thread thread4_savemap(save_map_thread);
+    
+    // 导入模型
 	HumanPoseEstimator model(initializeSampleParams());
 	sample::gLogInfo << "主线程--Loading and running a GPU inference engine" << std::endl;
 	if (!model.load()){
@@ -355,6 +381,8 @@ int main(int argc, char *argv[]) {
 	std::vector<cv::Point2f> joints(nJoints);                       // 存储关节点的位置信息
 	std::vector<double> maxval(nJoints);                            // 关节点的置信度
 
+
+    ftime(&t_capture_start);
     /*启动 forward 相机*/
 	if (!astra_reader.init(0, 2, 640, 480)){
 		std::cout << "主线程--Astra前相机未连接,请检查!" << std::endl;
@@ -366,24 +394,21 @@ int main(int argc, char *argv[]) {
 	}
     std::cout<<"主线程--后向相机已启动..."<<std::endl;
 
-    int cycle_times = 1;
-    int save_queue_length;
-    timeb t_capture_start,t_capture_end;
-    timeb t_end;
- 
-    
-    cv::Mat img_rgb, depth_forward, backrgb, depth_back;
-    bool IsCheck2CameraImg = true;
+    ftime(&t_capture_end);
+    double capture_time = t_capture_end.time + t_capture_end.millitm * 1e-3 - (t_capture_start.time + t_capture_start.millitm * 1e-3);
+    std::cout << "主线程--打开两相机capture_time =  " << capture_time << std::endl;
+
 
     while(running) {
        //test_move();
 
-        ftime(&t_capture_start);
+        // 雷达
+        if(!radarreader.radar_read()) {
+            std::cout<< "failed read radar data!"<< std::endl;
+        }
 
-        // // 雷达
-        // if(!radarreader.radar_read()) {
-        //     std::cout<< "failed read radar data!"<< std::endl;
-        // }
+        //ftime(&t_capture_start);
+
         // full_scan_data_st scan_data = radarreader.full_scan_data;
         // for (int i = 0; i < scan_data.vailtidy_point_num; i++)
         // {
@@ -403,9 +428,9 @@ int main(int argc, char *argv[]) {
         if (!model.infer(context, buffers, img_rgb_infer, joints, maxval)){
             printf("主线程--inference failed");
         }
-        ftime(&t_capture_end);
-        double capture_time = t_capture_end.time + t_capture_end.millitm * 1e-3 - (t_capture_start.time + t_capture_start.millitm * 1e-3);
-        std::cout << "主线程--捕获RGB图+推理耗时capture_time =  " << capture_time*1000 << std::endl;
+        // ftime(&t_capture_end);
+        //double capture_time = t_capture_end.time + t_capture_end.millitm * 1e-3 - (t_capture_start.time + t_capture_start.millitm * 1e-3);
+        //std::cout << "主线程--捕获RGB图+推理耗时capture_time =  " << capture_time*1000 << std::endl;
 
         // 获取前向深度图
         if(!astra_reader.read_depth(depth_forward)){
@@ -427,15 +452,6 @@ int main(int argc, char *argv[]) {
         }
         cv::resize(depth_back, depth_back, cv::Size(640, 480), 0.0, 0.0, cv::INTER_CUBIC);  //cv::Size(320, 240)
 
-        // 保存
-        // if(IsCheck2CameraImg){
-        //     cv::imwrite("img_rgb_forward.png", img_rgb);
-        //     cv::imwrite("backrgb.png", backrgb);
-        //     cv::imwrite("depth_forward.png", depth_forward);
-        //     cv::imwrite("depth_back.png", depth_back);
-        // }
-
-
         //获取关节点三维坐标
         std::vector<cv::Point3f> joints_coord = humandetect::get_joints_coord_bydepth(joints,maxval,depth_forward);
         imageinfo imginfo(cycle_times,get_time_now(),img_rgb,depth_forward,backrgb,depth_back,joints,joints_coord,maxval);
@@ -450,7 +466,7 @@ int main(int argc, char *argv[]) {
         imageinfo_queue_save.push(imginfo);
         save_queue_length = imageinfo_queue_save.size();
         image_lock_save.unlock();
-        save_cv.notify_one();
+        save_img_cv.notify_one();
         
         if(save_queue_length >= 100){std::cerr << "主线程--警告:待保存队列长度大于100" << std::endl;}
         cycle_times++;
@@ -458,7 +474,7 @@ int main(int argc, char *argv[]) {
         ftime(&t_end);
         double total_time = t_end.time + t_end.millitm * 1e-3 - (t_capture_start.time + t_capture_start.millitm * 1e-3);
         // std::cout << "主线程--总帧数 =  " << cycle_times << std::endl;
-        // std::cout << "主线程--总耗时total_time =  " <<dec<< total_time*1000 << std::endl;
+        //std::cout << "主线程--总耗时total_time =  " << total_time*1000 << std::endl;
 
         if(kbhit()) {
             int key = getch();
@@ -466,16 +482,17 @@ int main(int argc, char *argv[]) {
                 break;
             }
         }
-        sleep(1);
+        //sleep(1);
     }
     radarreader.save_fulldata(); // save到txt中，只有一针
     
-	std::unique_lock<std::mutex> image_lock_use(image_mutex_use);//is_exit只有这里操作，所以应该加不加lock都行
+    // 通知子线程，可以退出了
+	//std::unique_lock<std::mutex> image_lock_use(image_mutex_use);//is_exit只有这里操作，所以应该加不加lock都行
     is_exit = true;
-    image_lock_use.unlock();
+    //image_lock_use.unlock();
     image_cv.notify_one();
     map_cv.notify_one();
-    save_cv.notify_one();
+    save_img_cv.notify_one();
 
     // 等待后台线程
     thread1_generatemap.join();

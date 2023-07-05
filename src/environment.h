@@ -145,6 +145,67 @@ bool saveobs(std::vector<mapinfo> mapinfo_vector_save){
     }
 };
 
+// queue保存
+bool saveobs_queue(std::queue<mapinfo> mapinfo_vector_save){
+    std::fstream _fobs;
+    _fobs.open(OBS_PATH, std::ios::out | std::ios::trunc);
+    if(_fobs.is_open()){
+        
+        while(!mapinfo_vector_save.empty()){
+            mapinfo curinfo = mapinfo_vector_save.front();
+            _fobs << "关键帧frameid = " <<curinfo.frameid <<"\n";
+            _fobs << "关键帧frametime = "<<curinfo.frametime <<"\n";
+            _fobs << "小车原始朝向yaw_origin = "<<curinfo.yaw_origin <<"\n";
+            _fobs << "小车当前朝向yaw_current = "<<curinfo.yaw_current <<"\n";
+            for(int p = 0; p < curinfo.peo.size(); p++){
+                _fobs << "人体姿态 = " <<curinfo.peo[p] <<"\n";
+            }
+            _fobs << std::fixed << std::setprecision(3);
+            for (int j = 0; j < curinfo.obs_position.size(); j++)
+            {
+                _fobs << curinfo.obs_position[j][0] << "\t" << curinfo.obs_position[j][1] << "\n";
+            }
+            mapinfo_vector_save.pop();
+        }
+        std::cout<<std::dec<<"障碍物信息写入文件成功，总帧数 = "<<mapinfo_vector_save.size()<<std::endl;
+        _fobs.close();
+        return true;
+    }
+    else
+    {
+        std::cout<<"障碍物信息写入文件失败"<<std::endl;
+        return false;
+    }
+};
+
+// 写入一帧最新的
+bool saveobs_single(mapinfo map_save){
+    std::fstream _fobs;
+    _fobs.open(OBS_PATH, std::ios::out | std::ios::app);
+    if(_fobs.is_open()){
+        _fobs << "关键帧frameid = " <<map_save.frameid <<"\n";
+        _fobs << "关键帧frametime = "<<map_save.frametime <<"\n";
+        _fobs << "小车原始朝向yaw_origin = "<<map_save.yaw_origin <<"\n";
+        _fobs << "小车当前朝向yaw_current = "<<map_save.yaw_current <<"\n";
+        for(int p = 0; p < map_save.peo.size(); p++){
+            _fobs << "人体姿态 = " <<map_save.peo[p] <<"\n";
+        }
+        _fobs << std::fixed << std::setprecision(3);
+        for (int j = 0; j < map_save.obs_position.size(); j++)
+        {
+            _fobs << map_save.obs_position[j][0] << "\t" << map_save.obs_position[j][1] << "\n";
+        }
+        //std::cout<<std::dec<<"障碍物信息写入文件成功，总帧数 = "<<mapinfo_vector_save.size()<<std::endl;
+        _fobs.close();
+        return true;
+    }
+    else
+    {
+        std::cout<<"障碍物信息写入文件失败"<<std::endl;
+        return false;
+    }
+};
+
 void clearimgqueue(std::queue<imageinfo>& imageinfo_queue) {
 	std::queue<imageinfo> empty;
 	swap(empty, imageinfo_queue);
